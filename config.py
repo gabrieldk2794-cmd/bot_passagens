@@ -16,7 +16,7 @@ DESTINOS = [
 ]
 
 # Score mínimo para alerta
-SCORE_MINIMO = 01
+SCORE_MINIMO = 1
 
 # Intervalo de busca (segundos)
 INTERVALO = 600  # 10 min
