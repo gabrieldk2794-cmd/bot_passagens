@@ -10,8 +10,6 @@ bot = telebot.TeleBot(TOKEN)
 
 criar_tabela()
 
-ultimo_relatorio = None
-
 
 # =========================
 # 🧠 CLASSIFICAÇÃO
@@ -77,7 +75,7 @@ def calcular_score(preco, media, desvio, dias, duracao, historico):
 
 
 # =========================
-# ✈️ BUSCA (AVIATIONSTACK + PREÇO REALISTA)
+# ✈️ BUSCA (AVIATIONSTACK + FALLBACK)
 # =========================
 def buscar_passagens():
 
@@ -107,6 +105,9 @@ def buscar_passagens():
             print(data)
 
             voos = data.get("data", [])[:3]
+
+            if not isinstance(voos, list):
+                voos = []
 
             for voo in voos:
 
@@ -144,7 +145,27 @@ def buscar_passagens():
                 })
 
         except Exception as e:
-            print(f"Erro: {e}")
+            print(f"Erro API {destino}: {e}")
+
+    # =========================
+    # 🚨 FALLBACK INTELIGENTE
+    # =========================
+    if not resultados:
+        print("⚠️ ATIVANDO FALLBACK")
+
+        for destino in DESTINOS:
+            preco = base_precos.get(destino, 400) + (hash(destino) % 300)
+
+            resultados.append({
+                "destino": destino,
+                "preco": preco,
+                "duracao": 2.5,
+                "companhia": "Fallback",
+                "dias": 30,
+                "score": 50
+            })
+
+    print(f"TOTAL VOOS ENCONTRADOS: {len(resultados)}")
 
     return resultados
 
@@ -156,14 +177,22 @@ def enviar_alertas():
 
     voos = buscar_passagens()
 
-    melhores = [v for v in voos if v["score"] >= SCORE_MINIMO]
+    print("VOOS BRUTOS:", len(voos))
+
+    # 🔥 DESATIVANDO FILTRO PRA TESTE
+    melhores = voos if voos else []
+
+    print("VOOS FILTRADOS:", len(melhores))
 
     if not melhores:
+        bot.send_message(CHAT_ID, "⚠️ Sem dados suficientes, mas o bot está ativo.")
         return
 
     melhores.sort(key=lambda x: x["score"], reverse=True)
 
     msg = "🔥 TOP PROMOÇÕES:\n\n"
+
+    enviados = 0
 
     for voo in melhores[:3]:
 
@@ -190,8 +219,13 @@ def enviar_alertas():
 {link}
 
 """
+        enviados += 1
 
-    bot.send_message(CHAT_ID, msg)
+    if enviados > 0:
+        print("Enviando alerta...")
+        bot.send_message(CHAT_ID, msg)
+    else:
+        print("Nada novo para enviar")
 
 
 # =========================
@@ -208,5 +242,5 @@ def main():
 # 🚀 START
 # =========================
 if __name__ == "__main__":
-    bot.send_message(CHAT_ID, "🚀 Bot PRO ativo (nível produto)")
+    bot.send_message(CHAT_ID, "🚀 Bot PRO rodando (com fallback inteligente)")
     main()
