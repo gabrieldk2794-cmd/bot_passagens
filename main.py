@@ -6,16 +6,16 @@ import telebot
 from config import *
 from database import *
 
-print("🚀 Iniciando bot...")
-
 bot = telebot.TeleBot(TOKEN)
 criar_tabela()
 
 # =========================
 # ⚙️ CONFIG
 # =========================
-REQUESTS_POR_DIA = 3
-INTERVALO = int(86400 / REQUESTS_POR_DIA)
+DESTINOS_FIXOS = ["GRU", "GIG", "SSA", "REC"]
+indice_destino = 0
+
+INTERVALO = 43200  # 12h
 SCORE_MINIMO = 40
 
 
@@ -23,7 +23,6 @@ SCORE_MINIMO = 40
 # 🧠 REGRESSÃO
 # =========================
 def prever_regressao(historico):
-
     if not historico or len(historico) < 5:
         return 0
 
@@ -37,24 +36,19 @@ def prever_regressao(historico):
     num = sum((x[i] - mx) * (y[i] - my) for i in range(n))
     den = sum((x[i] - mx) ** 2 for i in range(n))
 
-    if den == 0:
-        return 0
-
-    return num / den
+    return num / den if den else 0
 
 
 # =========================
 # 🌍 SAZONALIDADE
 # =========================
 def fator_sazonalidade(data_voo):
-
     try:
         dt = datetime.fromisoformat(data_voo.replace("Z", "+00:00"))
         if dt.weekday() >= 4:
             return 1.2
     except:
         pass
-
     return 1.0
 
 
@@ -108,73 +102,79 @@ def calcular_score(preco, media, dias, slope, sazonal):
 # =========================
 def buscar_passagens():
 
-    print("🔍 Buscando passagens inteligentes...")
+    global indice_destino
+
+    destino = DESTINOS_FIXOS[indice_destino]
+    indice_destino = (indice_destino + 1) % len(DESTINOS_FIXOS)
+
+    print(f"🎯 Buscando destino: {destino}")
+
     resultados = []
 
     base_precos = {
-        "GRU": 250, "GIG": 300, "SSA": 500, "REC": 600,
-        "FOR": 700, "BSB": 300, "POA": 650,
-        "CUR": 200, "FLN": 400, "MCZ": 650
+        "GRU": 250,
+        "GIG": 300,
+        "SSA": 500,
+        "REC": 600
     }
 
-    for destino in DESTINOS:
+    try:
+        url = "http://api.aviationstack.com/v1/flights"
 
-        try:
-            url = "http://api.aviationstack.com/v1/flights"
+        params = {
+            "access_key": AVIATIONSTACK_KEY,
+            "dep_iata": ORIGEM,
+            "arr_iata": destino
+        }
 
-            params = {
-                "access_key": AVIATIONSTACK_KEY,
-                "dep_iata": ORIGEM,
-                "arr_iata": destino
-            }
+        response = requests.get(url, params=params)
+        print("API:", response.status_code)
 
-            response = requests.get(url, params=params)
-            print(f"API {destino}:", response.status_code)
+        data = response.json()
+        voos = data.get("data", [])[:3]
 
-            data = response.json()
-            voos = data.get("data", [])[:2]
+        for voo in voos:
 
-            for voo in voos:
+            companhia = voo.get("airline", {}).get("name", "N/A")
+            partida = voo.get("departure", {}).get("scheduled")
 
-                companhia = voo.get("airline", {}).get("name", "N/A")
-                partida = voo.get("departure", {}).get("scheduled")
+            if not partida:
+                continue
 
-                if not partida:
-                    continue
+            try:
+                dt = datetime.fromisoformat(partida.replace("Z", "+00:00"))
+                dias = (dt - datetime.now(timezone.utc)).days
+            except:
+                continue
 
-                try:
-                    dt = datetime.fromisoformat(partida.replace("Z", "+00:00"))
-                    dias = (dt - datetime.now(timezone.utc)).days
-                except:
-                    continue
+            preco = base_precos[destino] + (hash(destino + companhia) % 200)
 
-                preco = base_precos.get(destino, 400) + (hash(destino + companhia) % 200)
+            salvar_preco(ORIGEM, destino, partida, preco, 2.5, companhia)
 
-                salvar_preco(ORIGEM, destino, partida, preco, 2.5, companhia)
+            media, _ = obter_stats(ORIGEM, destino)
+            historico = historico_recente(ORIGEM, destino)
 
-                media, _ = obter_stats(ORIGEM, destino)
-                historico = historico_recente(ORIGEM, destino)
+            tendencia, recomendacao, slope, sazonal = prever_preco(historico, partida)
 
-                tendencia, recomendacao, slope, sazonal = prever_preco(historico, partida)
+            score = calcular_score(preco, media, dias, slope, sazonal)
 
-                score = calcular_score(preco, media, dias, slope, sazonal)
+            # 🚨 ALERTA EXTREMO (70% abaixo)
+            if media and preco < (media * 0.3):
+                score = 100
+                recomendacao = "🔥 COMPRAR AGORA (ERRO DE TARIFA)"
 
-                print(f"{destino} | R${preco} | Score {score:.1f}")
+            if score >= SCORE_MINIMO:
+                resultados.append({
+                    "destino": destino,
+                    "preco": preco,
+                    "dias": dias,
+                    "score": score,
+                    "tendencia": tendencia,
+                    "recomendacao": recomendacao
+                })
 
-                if score >= SCORE_MINIMO:
-                    resultados.append({
-                        "destino": destino,
-                        "preco": preco,
-                        "dias": dias,
-                        "score": score,
-                        "tendencia": tendencia,
-                        "recomendacao": recomendacao
-                    })
-
-        except Exception as e:
-            print("Erro:", e)
-
-    print("VOOS FILTRADOS:", len(resultados))
+    except Exception as e:
+        print("Erro:", e)
 
     return resultados
 
@@ -187,46 +187,49 @@ def enviar_alertas():
     voos = buscar_passagens()
 
     if not voos:
-        bot.send_message(CHAT_ID, "⚠️ Nenhuma oportunidade hoje.")
+        bot.send_message(CHAT_ID, "⚠️ Hoje não apareceu nada absurdo... mas estou de olho 👀")
         return
 
     voos.sort(key=lambda x: x["score"], reverse=True)
 
-    msg = "🔥 TOP PROMOÇÕES INTELIGENTES:\n\n"
+    msg = "🔥 Voe Barato BH | Oportunidade encontrada!\n\n"
 
-    enviados = 0
+    for voo in voos[:2]:
 
-    for voo in voos[:3]:
+        destaque = "🔥 OPORTUNIDADE RARA\n" if voo["score"] > 80 else ""
 
-        try:
-            if ja_enviado(ORIGEM, voo["destino"], voo["preco"]):
-                continue
-
-            registrar_alerta(ORIGEM, voo["destino"], voo["preco"])
-        except:
-            pass
+        link = f"https://www.skyscanner.com.br/transport/flights/{ORIGEM}/{voo['destino']}"
 
         msg += f"""
+{destaque}
 ✈️ {ORIGEM} → {voo['destino']}
 💰 R$ {voo['preco']}
+
 📊 Score: {voo['score']:.0f}
 
 🧠 {voo['tendencia']}
-📊 {voo['recomendacao']}
+💡 {voo['recomendacao']}
+
+⏳ Pode mudar a qualquer momento!
+
+🔎 {link}
+
+━━━━━━━━━━━━━━
+🔥 Voe Barato BH
+👀 Receba antes de todo mundo:
+https://t.me/SEU_CANAL_AQUI
 """
 
-        enviados += 1
-
-    if enviados > 0:
-        bot.send_message(CHAT_ID, msg)
-        print("✅ Alertas enviados")
+    bot.send_message(CHAT_ID, msg)
+    print("✅ Alerta enviado")
 
 
 # =========================
 # 🔁 LOOP
 # =========================
 def main():
-    print("🔁 Loop ativo")
+    print("🚀 Bot rodando 2x ao dia")
+
     while True:
         enviar_alertas()
         time.sleep(INTERVALO)
@@ -236,5 +239,5 @@ def main():
 # 🚀 START
 # =========================
 if __name__ == "__main__":
-    bot.send_message(CHAT_ID, "🚀 Bot inteligente ativo (Fase 2)")
+    bot.send_message(CHAT_ID, "🚀 Voe Barato BH ativo (modo otimizado)")
     main()
