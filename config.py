@@ -4,10 +4,8 @@ import os
 TOKEN = "8718891844:AAHvrlls7lFzI_X4JJ5fOeOzNIEdV9exTm4"
 CHAT_ID = "7385596927I"
 
-# API
-RAPIDAPI_KEY = "c71f6989bemsh446b4eb110cdd41p13b83ajsn76d1e7fb4cca"
+AVIATIONSTACK_KEY = "ea2cc91deda3420c8140d595e688aeb6"
 
-# Config geral
 ORIGEM = "CNF"
 
 DESTINOS = [
@@ -15,8 +13,5 @@ DESTINOS = [
     "BSB", "POA", "CUR", "FLN", "MCZ"
 ]
 
-# Score mínimo para alerta
-SCORE_MINIMO = 40
-
-# Intervalo de busca (segundos)
-INTERVALO = 600  # 10 min
+SCORE_MINIMO = 45
+INTERVALO = 600
