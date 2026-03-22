@@ -11,10 +11,10 @@ bot = telebot.TeleBot(TOKEN)
 criar_tabela()
 
 # =========================
-# ⚙️ CONFIG LOCAL
+# ⚙️ CONFIG
 # =========================
 REQUESTS_POR_DIA = 3
-INTERVALO = int(86400 / REQUESTS_POR_DIA)  # divide o dia em 3 execuções
+INTERVALO = int(86400 / REQUESTS_POR_DIA)
 SCORE_MINIMO = 40
 
 
@@ -33,56 +33,108 @@ def classificar_oferta(score):
 
 
 # =========================
+# 📈 REGRESSÃO LINEAR
+# =========================
+def prever_regressao(historico):
+
+    if not historico or len(historico) < 5:
+        return 0  # sem previsão
+
+    n = len(historico)
+    x = list(range(n))
+    y = historico[::-1]  # mais antigo → mais recente
+
+    media_x = sum(x) / n
+    media_y = sum(y) / n
+
+    numerador = sum((x[i] - media_x) * (y[i] - media_y) for i in range(n))
+    denominador = sum((x[i] - media_x) ** 2 for i in range(n))
+
+    if denominador == 0:
+        return 0
+
+    slope = numerador / denominador
+
+    return slope  # tendência
+
+
+# =========================
+# 🌍 SAZONALIDADE
+# =========================
+def fator_sazonalidade(data_voo):
+
+    try:
+        dt = datetime.fromisoformat(data_voo.replace("Z", "+00:00"))
+    except:
+        return 1.0
+
+    dia_semana = dt.weekday()
+
+    # fim de semana = mais caro
+    if dia_semana >= 4:
+        return 1.2
+
+    return 1.0
+
+
+# =========================
+# 🔮 PREVISÃO FINAL
+# =========================
+def prever_preco(historico, data_voo):
+
+    slope = prever_regressao(historico)
+    sazonal = fator_sazonalidade(data_voo)
+
+    if slope > 5:
+        tendencia = "SUBINDO 📈"
+        recomendacao = "COMPRAR AGORA"
+    elif slope < -5:
+        tendencia = "CAINDO 📉"
+        recomendacao = "ESPERAR"
+    else:
+        tendencia = "ESTÁVEL ➖"
+        recomendacao = "MONITORAR"
+
+    return tendencia, recomendacao, slope, sazonal
+
+
+# =========================
 # 🧠 SCORE PRO
 # =========================
-def calcular_score(preco, media, desvio, dias, duracao, historico):
+def calcular_score(preco, media, dias, duracao, slope, sazonal):
 
     if not media:
-        deal_score = 50
+        deal = 50
     else:
-        desconto = (media - preco) / media
-        deal_score = desconto * 100
+        deal = ((media - preco) / media) * 100
 
-    trend_score = 0
-    if historico and len(historico) >= 3:
-        recente = historico[:3]
-        antigo = historico[-3:]
+    # impacto da tendência
+    trend = -slope * 2  # se subindo → score maior
 
-        media_recente = sum(recente) / len(recente)
-        media_antiga = sum(antigo) / len(antigo)
-
-        if media_antiga > 0:
-            queda = (media_antiga - media_recente) / media_antiga
-            trend_score = queda * 100
-
+    # urgência
     if dias < 7:
         urgencia = 100
-    elif dias < 15:
-        urgencia = 80
     elif dias < 30:
-        urgencia = 60
+        urgencia = 70
     else:
-        urgencia = 30
+        urgencia = 40
 
-    if duracao <= 3:
-        qualidade = 100
-    elif duracao <= 6:
-        qualidade = 70
-    else:
-        qualidade = 40
+    # qualidade
+    qualidade = 100 if duracao <= 3 else 70
 
     score = (
-        deal_score * 0.4 +
-        trend_score * 0.2 +
+        deal * 0.4 +
+        trend * 0.2 +
         urgencia * 0.2 +
-        qualidade * 0.2
+        qualidade * 0.1 +
+        (sazonal * 50) * 0.1
     )
 
     return max(0, min(100, score))
 
 
 # =========================
-# ✈️ BUSCA (API + FALLBACK)
+# ✈️ BUSCA
 # =========================
 def buscar_passagens():
 
@@ -108,9 +160,6 @@ def buscar_passagens():
             response = requests.get(url, params=params)
             data = response.json()
 
-            print(f"\n==== AVIATIONSTACK ({destino}) ====")
-            print(data)
-
             voos = data.get("data", [])[:3]
 
             for voo in voos:
@@ -125,8 +174,7 @@ def buscar_passagens():
                     data_voo_dt = datetime.fromisoformat(partida.replace("Z", "+00:00"))
                     agora = datetime.now(timezone.utc)
                     dias = (data_voo_dt - agora).days
-                except Exception as e:
-                    print("Erro datetime:", e)
+                except:
                     continue
 
                 variacao = (hash(destino + companhia) % 200)
@@ -135,10 +183,12 @@ def buscar_passagens():
 
                 salvar_preco(ORIGEM, destino, partida, preco, duracao, companhia)
 
-                media, desvio = obter_stats(ORIGEM, destino)
+                media, _ = obter_stats(ORIGEM, destino)
                 historico = historico_recente(ORIGEM, destino)
 
-                score = calcular_score(preco, media, desvio, dias, duracao, historico)
+                tendencia, recomendacao, slope, sazonal = prever_preco(historico, partida)
+
+                score = calcular_score(preco, media, dias, duracao, slope, sazonal)
 
                 resultados.append({
                     "destino": destino,
@@ -146,31 +196,27 @@ def buscar_passagens():
                     "duracao": duracao,
                     "companhia": companhia,
                     "dias": dias,
-                    "score": score
+                    "score": score,
+                    "tendencia": tendencia,
+                    "recomendacao": recomendacao
                 })
 
         except Exception as e:
-            print(f"Erro API {destino}:", e)
+            print("Erro API:", e)
 
-    # =========================
-    # 🚨 FALLBACK
-    # =========================
+    # fallback
     if not resultados:
-        print("⚠️ ATIVANDO FALLBACK")
-
         for destino in DESTINOS:
-            preco = base_precos.get(destino, 400) + (hash(destino) % 300)
-
             resultados.append({
                 "destino": destino,
-                "preco": preco,
+                "preco": 300 + (hash(destino) % 300),
                 "duracao": 2.5,
                 "companhia": "Fallback",
                 "dias": 30,
-                "score": 50
+                "score": 50,
+                "tendencia": "ESTÁVEL ➖",
+                "recomendacao": "MONITORAR"
             })
-
-    print(f"TOTAL VOOS ENCONTRADOS: {len(resultados)}")
 
     return resultados
 
@@ -182,21 +228,15 @@ def enviar_alertas():
 
     voos = buscar_passagens()
 
-    print("VOOS BRUTOS:", len(voos))
-
     melhores = [v for v in voos if v["score"] >= SCORE_MINIMO]
 
-    print("VOOS FILTRADOS:", len(melhores))
-
     if not melhores:
-        bot.send_message(CHAT_ID, "⚠️ Nenhuma promoção relevante hoje, mas estou monitorando 👀")
+        bot.send_message(CHAT_ID, "⚠️ Nenhuma promoção relevante hoje.")
         return
 
     melhores.sort(key=lambda x: x["score"], reverse=True)
 
-    msg = "🔥 TOP PROMOÇÕES DO DIA:\n\n"
-
-    enviados = 0
+    msg = "🔥 TOP PROMOÇÕES INTELIGENTES:\n\n"
 
     for voo in melhores[:3]:
 
@@ -205,9 +245,8 @@ def enviar_alertas():
                 continue
 
             registrar_alerta(ORIGEM, voo["destino"], voo["preco"])
-
-        except Exception as e:
-            print("Erro controle alerta:", e)
+        except:
+            pass
 
         tag = classificar_oferta(voo["score"])
 
@@ -220,28 +259,22 @@ def enviar_alertas():
 💰 R$ {voo['preco']}
 📊 Score: {voo['score']:.0f}
 
-🕒 {voo['duracao']:.1f}h
-📅 {voo['dias']} dias
+🧠 {voo['tendencia']}
+📊 {voo['recomendacao']}
 
-🔎 Ver preço real:
-{link}
+🔎 {link}
 
 """
-        enviados += 1
 
-    if enviados > 0:
-        print("Enviando alerta...")
-        bot.send_message(CHAT_ID, msg)
+    bot.send_message(CHAT_ID, msg)
 
 
 # =========================
-# 🔁 LOOP CONTROLADO (3x/dia)
+# 🔁 LOOP
 # =========================
 def main():
     while True:
-        print("Rodando busca...")
         enviar_alertas()
-        print(f"Aguardando {INTERVALO/3600:.1f} horas...")
         time.sleep(INTERVALO)
 
 
@@ -249,5 +282,5 @@ def main():
 # 🚀 START
 # =========================
 if __name__ == "__main__":
-    bot.send_message(CHAT_ID, "🚀 Bot PRO ativo (3x ao dia)")
+    bot.send_message(CHAT_ID, "🚀 Bot com previsão avançada ativo")
     main()
