@@ -1,13 +1,21 @@
 import sqlite3
 
+
+# =========================
+# 🔌 CONEXÃO
+# =========================
 def conectar():
-    return sqlite3.connect("voos.db")
+    return sqlite3.connect("voos.db", check_same_thread=False)
 
 
+# =========================
+# 🏗️ CRIAR TABELAS
+# =========================
 def criar_tabela():
     conn = conectar()
     cursor = conn.cursor()
 
+    # tabela de preços
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS precos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,6 +29,7 @@ def criar_tabela():
     )
     """)
 
+    # tabela de alertas
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS alertas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,80 +44,122 @@ def criar_tabela():
     conn.close()
 
 
+# =========================
+# 💾 SALVAR PREÇO
+# =========================
 def salvar_preco(origem, destino, data_voo, preco, duracao, companhia):
-    conn = conectar()
-    cursor = conn.cursor()
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
 
-    cursor.execute("""
-    INSERT INTO precos (origem, destino, data_voo, preco, duracao, companhia)
-    VALUES (?, ?, ?, ?, ?, ?)
-    """, (origem, destino, data_voo, preco, duracao, companhia))
+        cursor.execute("""
+        INSERT INTO precos (origem, destino, data_voo, preco, duracao, companhia)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (origem, destino, data_voo, preco, duracao, companhia))
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+        print("Erro ao salvar_preco:", e)
 
 
+# =========================
+# 📊 MÉDIA E DESVIO (SEGURO)
+# =========================
 def obter_stats(origem, destino):
-    conn = conectar()
-    cursor = conn.cursor()
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
 
-    cursor.execute("""
-    SELECT AVG(preco), 
-           (AVG(preco * preco) - AVG(preco) * AVG(preco))
-    FROM precos
-    WHERE origem = ? AND destino = ?
-    """, (origem, destino))
+        cursor.execute("""
+        SELECT preco FROM precos
+        WHERE origem = ? AND destino = ?
+        """, (origem, destino))
 
-    resultado = cursor.fetchone()
-    conn.close()
+        dados = cursor.fetchall()
+        conn.close()
 
-    media = resultado[0] if resultado[0] else None
-    variancia = resultado[1] if resultado[1] else 0
-    desvio = variancia ** 0.5 if variancia > 0 else 0
+        if not dados:
+            return None, 0
 
-    return media, desvio
+        precos = [d[0] for d in dados]
+
+        media = sum(precos) / len(precos)
+
+        variancia = sum((p - media) ** 2 for p in precos) / len(precos)
+        desvio = variancia ** 0.5
+
+        return media, desvio
+
+    except Exception as e:
+        print("Erro ao obter_stats:", e)
+        return None, 0
 
 
+# =========================
+# 📈 HISTÓRICO RECENTE
+# =========================
 def historico_recente(origem, destino, limite=10):
-    conn = conectar()
-    cursor = conn.cursor()
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
 
-    cursor.execute("""
-    SELECT preco FROM precos
-    WHERE origem = ? AND destino = ?
-    ORDER BY timestamp DESC
-    LIMIT ?
-    """, (origem, destino, limite))
+        cursor.execute("""
+        SELECT preco FROM precos
+        WHERE origem = ? AND destino = ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+        """, (origem, destino, limite))
 
-    dados = cursor.fetchall()
-    conn.close()
+        dados = cursor.fetchall()
+        conn.close()
 
-    return [d[0] for d in dados]
+        return [d[0] for d in dados]
+
+    except Exception as e:
+        print("Erro ao historico_recente:", e)
+        return []
 
 
+# =========================
+# 🚫 EVITAR DUPLICADOS
+# =========================
 def ja_enviado(origem, destino, preco):
-    conn = conectar()
-    cursor = conn.cursor()
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
 
-    cursor.execute("""
-    SELECT 1 FROM alertas
-    WHERE origem = ? AND destino = ? AND preco = ?
-    """, (origem, destino, preco))
+        cursor.execute("""
+        SELECT 1 FROM alertas
+        WHERE origem = ? AND destino = ? AND preco = ?
+        """, (origem, destino, preco))
 
-    resultado = cursor.fetchone()
-    conn.close()
+        resultado = cursor.fetchone()
+        conn.close()
 
-    return resultado is not None
+        return resultado is not None
+
+    except Exception as e:
+        print("Erro ao ja_enviado:", e)
+        return False
 
 
+# =========================
+# 📩 REGISTRAR ALERTA
+# =========================
 def registrar_alerta(origem, destino, preco):
-    conn = conectar()
-    cursor = conn.cursor()
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
 
-    cursor.execute("""
-    INSERT INTO alertas (origem, destino, preco)
-    VALUES (?, ?, ?)
-    """, (origem, destino, preco))
+        cursor.execute("""
+        INSERT INTO alertas (origem, destino, preco)
+        VALUES (?, ?, ?)
+        """, (origem, destino, preco))
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+        print("Erro ao registrar_alerta:", e)
