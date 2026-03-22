@@ -1,6 +1,6 @@
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import telebot
 
 from config import *
@@ -9,6 +9,13 @@ from database import *
 bot = telebot.TeleBot(TOKEN)
 
 criar_tabela()
+
+# =========================
+# ⚙️ CONFIG LOCAL
+# =========================
+REQUESTS_POR_DIA = 3
+INTERVALO = int(86400 / REQUESTS_POR_DIA)  # divide o dia em 3 execuções
+SCORE_MINIMO = 40
 
 
 # =========================
@@ -75,7 +82,7 @@ def calcular_score(preco, media, desvio, dias, duracao, historico):
 
 
 # =========================
-# ✈️ BUSCA (AVIATIONSTACK + FALLBACK)
+# ✈️ BUSCA (API + FALLBACK)
 # =========================
 def buscar_passagens():
 
@@ -106,9 +113,6 @@ def buscar_passagens():
 
             voos = data.get("data", [])[:3]
 
-            if not isinstance(voos, list):
-                voos = []
-
             for voo in voos:
 
                 companhia = voo.get("airline", {}).get("name", "N/A")
@@ -118,11 +122,12 @@ def buscar_passagens():
                     continue
 
                 try:
-                    data_voo_dt = datetime.fromisoformat(partida.replace("Z", ""))
-                except:
+                    data_voo_dt = datetime.fromisoformat(partida.replace("Z", "+00:00"))
+                    agora = datetime.now(timezone.utc)
+                    dias = (data_voo_dt - agora).days
+                except Exception as e:
+                    print("Erro datetime:", e)
                     continue
-
-                dias = (data_voo_dt - datetime.now()).days
 
                 variacao = (hash(destino + companhia) % 200)
                 preco = base_precos.get(destino, 400) + variacao
@@ -145,10 +150,10 @@ def buscar_passagens():
                 })
 
         except Exception as e:
-            print(f"Erro API {destino}: {e}")
+            print(f"Erro API {destino}:", e)
 
     # =========================
-    # 🚨 FALLBACK INTELIGENTE
+    # 🚨 FALLBACK
     # =========================
     if not resultados:
         print("⚠️ ATIVANDO FALLBACK")
@@ -179,27 +184,30 @@ def enviar_alertas():
 
     print("VOOS BRUTOS:", len(voos))
 
-    # 🔥 DESATIVANDO FILTRO PRA TESTE
-    melhores = voos if voos else []
+    melhores = [v for v in voos if v["score"] >= SCORE_MINIMO]
 
     print("VOOS FILTRADOS:", len(melhores))
 
     if not melhores:
-        bot.send_message(CHAT_ID, "⚠️ Sem dados suficientes, mas o bot está ativo.")
+        bot.send_message(CHAT_ID, "⚠️ Nenhuma promoção relevante hoje, mas estou monitorando 👀")
         return
 
     melhores.sort(key=lambda x: x["score"], reverse=True)
 
-    msg = "🔥 TOP PROMOÇÕES:\n\n"
+    msg = "🔥 TOP PROMOÇÕES DO DIA:\n\n"
 
     enviados = 0
 
     for voo in melhores[:3]:
 
-        if ja_enviado(ORIGEM, voo["destino"], voo["preco"]):
-            continue
+        try:
+            if ja_enviado(ORIGEM, voo["destino"], voo["preco"]):
+                continue
 
-        registrar_alerta(ORIGEM, voo["destino"], voo["preco"])
+            registrar_alerta(ORIGEM, voo["destino"], voo["preco"])
+
+        except Exception as e:
+            print("Erro controle alerta:", e)
 
         tag = classificar_oferta(voo["score"])
 
@@ -224,17 +232,16 @@ def enviar_alertas():
     if enviados > 0:
         print("Enviando alerta...")
         bot.send_message(CHAT_ID, msg)
-    else:
-        print("Nada novo para enviar")
 
 
 # =========================
-# 🔁 LOOP
+# 🔁 LOOP CONTROLADO (3x/dia)
 # =========================
 def main():
     while True:
         print("Rodando busca...")
         enviar_alertas()
+        print(f"Aguardando {INTERVALO/3600:.1f} horas...")
         time.sleep(INTERVALO)
 
 
@@ -242,5 +249,5 @@ def main():
 # 🚀 START
 # =========================
 if __name__ == "__main__":
-    bot.send_message(CHAT_ID, "🚀 Bot PRO rodando (com fallback inteligente)")
+    bot.send_message(CHAT_ID, "🚀 Bot PRO ativo (3x ao dia)")
     main()
