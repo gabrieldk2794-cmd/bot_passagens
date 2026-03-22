@@ -10,20 +10,20 @@ bot = telebot.TeleBot(TOKEN)
 
 criar_tabela()
 
+ultimo_relatorio = None
+
 
 # =========================
 # 🧠 SCORE INTELIGENTE
 # =========================
 def calcular_score(preco, media, desvio, dias, duracao):
 
-    # 🔥 BOOTSTRAP (início do sistema)
     if not media:
         return 65
 
     desconto = (media - preco) / media
     raridade = (media - preco) / desvio if desvio else 0
 
-    # 📅 timing
     if dias < 7:
         timing = 1.0
     elif dias < 30:
@@ -31,7 +31,6 @@ def calcular_score(preco, media, desvio, dias, duracao):
     else:
         timing = 0.3
 
-    # ✈️ qualidade do voo
     if duracao <= 3:
         qualidade = 1.0
     elif duracao <= 6:
@@ -54,7 +53,7 @@ def calcular_score(preco, media, desvio, dias, duracao):
 # =========================
 def buscar_passagens():
 
-    melhores = []
+    resultados = []
 
     for destino in DESTINOS:
 
@@ -94,40 +93,37 @@ def buscar_passagens():
 
                 dias = (data_voo_dt - datetime.now()).days
 
-                # 💾 salva histórico
                 salvar_preco(ORIGEM, destino, data_voo, preco, duracao, companhia)
 
-                # 📊 estatísticas
                 media, desvio = obter_stats(ORIGEM, destino)
 
-                # 🧠 score
                 score = calcular_score(preco, media, desvio, dias, duracao)
 
                 print(f"{destino} | R$ {preco} | Score: {score:.1f}")
 
-                # 🎯 filtro inteligente
-                if score >= SCORE_MINIMO:
-                    melhores.append({
-                        "destino": destino,
-                        "preco": preco,
-                        "duracao": duracao,
-                        "companhia": companhia,
-                        "dias": dias,
-                        "score": score
-                    })
+                resultados.append({
+                    "destino": destino,
+                    "preco": preco,
+                    "duracao": duracao,
+                    "companhia": companhia,
+                    "dias": dias,
+                    "score": score
+                })
 
         except Exception as e:
             print(f"Erro em {destino}: {e}")
 
-    return melhores
+    return resultados
 
 
 # =========================
-# 📩 ENVIO DE ALERTAS
+# 📩 ALERTAS INTELIGENTES
 # =========================
 def enviar_alertas():
 
-    melhores = buscar_passagens()
+    voos = buscar_passagens()
+
+    melhores = [v for v in voos if v["score"] >= SCORE_MINIMO]
 
     if not melhores:
         print("Nenhuma promo relevante")
@@ -141,7 +137,6 @@ def enviar_alertas():
 
     for i, voo in enumerate(top, 1):
 
-        # 🚫 anti-spam
         if ja_enviado(ORIGEM, voo["destino"], voo["preco"]):
             continue
 
@@ -170,26 +165,53 @@ def enviar_alertas():
 
 
 # =========================
-# 🤖 COMANDOS TELEGRAM
+# 📊 RELATÓRIO DIÁRIO (TESTE FORÇADO)
 # =========================
-@bot.message_handler(commands=['start'])
-def start(msg):
-    bot.send_message(msg.chat.id, "✈️ Bot de passagens ativo!")
+def enviar_relatorio_diario():
 
+    print("Gerando relatório diário...")
 
-@bot.message_handler(commands=['buscar'])
-def buscar_cmd(msg):
-    enviar_alertas()
-    bot.send_message(msg.chat.id, "🔍 Busca finalizada!")
+    voos = buscar_passagens()
+
+    if not voos:
+        bot.send_message(CHAT_ID, "📊 Nenhum voo encontrado hoje.")
+        return
+
+    voos.sort(key=lambda x: x["preco"])
+    top = voos[:5]
+
+    msg = "📊 MELHORES PREÇOS DE HOJE:\n\n"
+
+    for i, voo in enumerate(top, 1):
+        msg += f"""
+{i}. ✈️ {ORIGEM} → {voo['destino']}
+💰 R$ {voo['preco']}
+📊 Score: {voo['score']:.0f}
+
+🕒 {voo['duracao']:.1f}h
+📅 {voo['dias']} dias
+
+"""
+
+    bot.send_message(CHAT_ID, msg)
 
 
 # =========================
 # 🔁 LOOP PRINCIPAL
 # =========================
 def main():
+    global ultimo_relatorio
+
     while True:
         print("Buscando passagens...")
         enviar_alertas()
+
+        # 🔥 FORÇADO PRA TESTE (vai mandar sempre)
+        if True:
+            if ultimo_relatorio != datetime.now().date():
+                enviar_relatorio_diario()
+                ultimo_relatorio = datetime.now().date()
+
         time.sleep(INTERVALO)
 
 
@@ -198,5 +220,5 @@ def main():
 # =========================
 if __name__ == "__main__":
     print("Bot iniciado!")
-    bot.send_message(CHAT_ID, "🚀 Bot rodando em modo inteligente!")
+    bot.send_message(CHAT_ID, "🚀 TESTE: Bot com relatório diário ativo!")
     main()
