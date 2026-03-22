@@ -1,11 +1,7 @@
 import sqlite3
-import statistics
-
-DB_NAME = "dados.db"
-
 
 def conectar():
-    return sqlite3.connect(DB_NAME)
+    return sqlite3.connect("voos.db")
 
 
 def criar_tabela():
@@ -44,8 +40,8 @@ def salvar_preco(origem, destino, data_voo, preco, duracao, companhia):
     cursor = conn.cursor()
 
     cursor.execute("""
-        INSERT INTO precos (origem, destino, data_voo, preco, duracao, companhia)
-        VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO precos (origem, destino, data_voo, preco, duracao, companhia)
+    VALUES (?, ?, ?, ?, ?, ?)
     """, (origem, destino, data_voo, preco, duracao, companhia))
 
     conn.commit()
@@ -57,21 +53,37 @@ def obter_stats(origem, destino):
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT preco FROM precos
-        WHERE origem = ? AND destino = ?
-        AND timestamp >= datetime('now', '-30 days')
+    SELECT AVG(preco), 
+           (AVG(preco * preco) - AVG(preco) * AVG(preco))
+    FROM precos
+    WHERE origem = ? AND destino = ?
     """, (origem, destino))
 
-    precos = [row[0] for row in cursor.fetchall()]
+    resultado = cursor.fetchone()
     conn.close()
 
-    if len(precos) < 5:
-        return None, None
-
-    media = sum(precos) / len(precos)
-    desvio = statistics.stdev(precos) if len(precos) > 1 else 0
+    media = resultado[0] if resultado[0] else None
+    variancia = resultado[1] if resultado[1] else 0
+    desvio = variancia ** 0.5 if variancia > 0 else 0
 
     return media, desvio
+
+
+def historico_recente(origem, destino, limite=10):
+    conn = conectar()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT preco FROM precos
+    WHERE origem = ? AND destino = ?
+    ORDER BY timestamp DESC
+    LIMIT ?
+    """, (origem, destino, limite))
+
+    dados = cursor.fetchall()
+    conn.close()
+
+    return [d[0] for d in dados]
 
 
 def ja_enviado(origem, destino, preco):
@@ -79,9 +91,8 @@ def ja_enviado(origem, destino, preco):
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT * FROM alertas
-        WHERE origem = ? AND destino = ? AND preco = ?
-        AND timestamp >= datetime('now', '-6 hours')
+    SELECT 1 FROM alertas
+    WHERE origem = ? AND destino = ? AND preco = ?
     """, (origem, destino, preco))
 
     resultado = cursor.fetchone()
@@ -95,8 +106,8 @@ def registrar_alerta(origem, destino, preco):
     cursor = conn.cursor()
 
     cursor.execute("""
-        INSERT INTO alertas (origem, destino, preco)
-        VALUES (?, ?, ?)
+    INSERT INTO alertas (origem, destino, preco)
+    VALUES (?, ?, ?)
     """, (origem, destino, preco))
 
     conn.commit()
