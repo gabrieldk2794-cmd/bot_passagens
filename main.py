@@ -72,9 +72,22 @@ def buscar_passagens():
 
         try:
             response = requests.get(url, headers=headers, params=params)
-            data = response.json()
 
-            voos = data.get("data", [])[:3]
+            # 🔍 DEBUG
+            print(f"\n==== DEBUG API ({destino}) ====")
+            print("Status Code:", response.status_code)
+
+            data = response.json()
+            print("Resposta da API:", data)
+
+            # 🔥 CORREÇÃO ROBUSTA
+            voos = data.get("data") or data.get("results") or []
+
+            # 🛡️ PROTEÇÃO
+            if not isinstance(voos, list):
+                voos = []
+
+            voos = voos[:3]
 
             for voo in voos:
 
@@ -165,7 +178,7 @@ def enviar_alertas():
 
 
 # =========================
-# 📊 RELATÓRIO DIÁRIO (TESTE FORÇADO)
+# 📊 RELATÓRIO DIÁRIO
 # =========================
 def enviar_relatorio_diario():
 
@@ -174,7 +187,10 @@ def enviar_relatorio_diario():
     voos = buscar_passagens()
 
     if not voos:
-        bot.send_message(CHAT_ID, "📊 Nenhum voo encontrado hoje.")
+        bot.send_message(
+            CHAT_ID,
+            "⚠️ Hoje não encontramos boas ofertas, mas seguimos monitorando 24h ✈️"
+        )
         return
 
     voos.sort(key=lambda x: x["preco"])
@@ -203,14 +219,16 @@ def main():
     global ultimo_relatorio
 
     while True:
+        agora = datetime.now()
+
         print("Buscando passagens...")
         enviar_alertas()
 
-        # 🔥 FORÇADO PRA TESTE (vai mandar sempre)
+        # 🔥 TESTE FORÇADO
         if True:
-            if ultimo_relatorio != datetime.now().date():
+            if ultimo_relatorio != agora.date():
                 enviar_relatorio_diario()
-                ultimo_relatorio = datetime.now().date()
+                ultimo_relatorio = agora.date()
 
         time.sleep(INTERVALO)
 
@@ -220,5 +238,5 @@ def main():
 # =========================
 if __name__ == "__main__":
     print("Bot iniciado!")
-    bot.send_message(CHAT_ID, "🚀 TESTE: Bot com relatório diário ativo!")
+    bot.send_message(CHAT_ID, "🚀 Bot PRO rodando com sistema robusto!")
     main()
